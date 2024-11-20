@@ -14,7 +14,10 @@ For Unraid, point it at your Audio/Media directory to save output.
 
 #### Unraid
 - Docker -> Add Container
-  - Template from `avbox` and adjust port(s) and volume mounts as needed.
+  - Template from `chatai` and adjust port(s) and volume mounts as needed.
+  - Have an image in /mnt/user/Media/pictures/avatars/icon_<name>.png
+  - If using Streamlit route URL port of 8501 to an unused port
+
 #### Github
 - Credentials for DockerHub
   - <repo>/settings/secrets/actions
