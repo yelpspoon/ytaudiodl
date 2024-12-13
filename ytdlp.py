@@ -1,10 +1,10 @@
-# ytdlp.py
 import re
 import subprocess
 import shutil
 import time
 import logging
 from pathlib import Path
+import unicodedata
 import argparse
 import sys
 
@@ -44,6 +44,17 @@ def setup_logging(video_title, is_streamlit=False):
         logging.info("Logging started for command line.")
 
 
+def sanitize_filename(filename):
+    """Sanitize a filename by normalizing Unicode and removing invalid characters."""
+    # Normalize Unicode characters to ASCII
+    normalized = unicodedata.normalize('NFKD', filename).encode('ascii', 'ignore').decode('utf-8')
+    # Remove invalid characters (anything not alphanumeric, space, period, dash, or underscore)
+    sanitized = re.sub(r'[^\w\s\.-]', '', normalized)
+    # Collapse multiple spaces and strip leading/trailing spaces
+    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+    return sanitized
+
+
 @timing_function
 def extract_video_info(video_url):
     """Extract video title and ID using yt-dlp CLI."""
@@ -69,13 +80,14 @@ def process_video(video_url, log_enabled=False, progress_callback=None, is_strea
     if log_enabled:
         setup_logging(video_title, is_streamlit)
 
-    # Create a subdirectory named after the video title
-    video_title_path = Path(video_title)
+    # Sanitize the video title for creating a valid directory
+    sanitized_title = sanitize_filename(video_title)
+    video_title_path = Path(sanitized_title)
     video_title_path.mkdir(parents=True, exist_ok=True)
 
     # Download audio to the subdirectory
     if progress_callback:
-        progress_callback(f"Downloading audio for {video_title}...")
+        progress_callback(f"Downloading audio for {sanitized_title}...")
 
     process = subprocess.Popen(
         [
@@ -109,7 +121,7 @@ def process_video(video_url, log_enabled=False, progress_callback=None, is_strea
     process.wait()
 
     # Handle chapter-split files
-    chapter_files = list(Path(".").glob(f"{video_title} - *.mp3"))
+    chapter_files = list(Path(".").glob(f"{sanitized_title} - *.mp3"))
 
     if chapter_files:
         if progress_callback:
@@ -121,16 +133,16 @@ def process_video(video_url, log_enabled=False, progress_callback=None, is_strea
                 number = match.group(1)
                 two_digit_number = f"{int(number):02d}"
                 formatted_name = chapter_file.name.strip().replace(f" - {number}", f" - {two_digit_number}")
-                new_name = formatted_name.replace(f" [{video_id}]", "")
+                new_name = sanitize_filename(formatted_name.replace(f" [{video_id}]", ""))
             else:
-                new_name = chapter_file.name.replace(f" [{video_id}]", "")
+                new_name = sanitize_filename(chapter_file.name.replace(f" [{video_id}]", ""))
 
             dest = video_title_path / new_name
             shutil.move(str(chapter_file), str(dest))
             logging.info(f"Renamed and moved: {chapter_file} -> {dest}")
 
         # Remove the main, originally downloaded file
-        main_file = video_title_path / f"{video_title}.mp3"
+        main_file = video_title_path / f"{sanitized_title}.mp3"
         if main_file.exists():
             main_file.unlink()
             logging.info(f"Removed original main file: {main_file}")
@@ -141,7 +153,7 @@ def process_video(video_url, log_enabled=False, progress_callback=None, is_strea
     logging.info("About to apply replaygain")
     apply_replaygain(video_title_path, progress_callback)
 
-    return video_title_path if chapter_files else video_title_path / f"{video_title}.mp3"
+    return video_title_path if chapter_files else video_title_path / f"{sanitized_title}.mp3"
 
 
 def apply_replaygain(video_title_path, progress_callback=None):
@@ -162,14 +174,12 @@ def apply_replaygain(video_title_path, progress_callback=None):
             command = ["mp3gain", "-r", "-k", "-o", str(file)]
             result = subprocess.run(command, capture_output=True, text=True)
 
-            # Check if the command was successful
             if result.returncode == 0:
                 combined_output = result.stdout.strip()
                 logging.info(f"ReplayGain applied to {file}: {combined_output}")
                 if progress_callback:
                     progress_callback(f"ReplayGain applied to {file}: {combined_output}")
             else:
-                # Combine stdout and stderr if the return code is not 0
                 combined_output = result.stdout.strip() + "\n" + result.stderr.strip()
                 logging.error(f"Error applying ReplayGain to {file}: {combined_output}")
                 if progress_callback:
@@ -181,13 +191,13 @@ def apply_replaygain(video_title_path, progress_callback=None):
             logging.error(error_message)
             if progress_callback:
                 progress_callback(error_message)
-            raise  # Re-raise the error to propagate it
+            raise
         except Exception as e:
             error_message = f"Unexpected error applying ReplayGain to {file}: {str(e)}"
             logging.error(error_message)
             if progress_callback:
                 progress_callback(error_message)
-            raise  # Re-raise the error to propagate it
+            raise
 
 
 def main():
@@ -197,12 +207,3 @@ def main():
     parser.add_argument('-l', '--log', action='store_true', help="Enable logging to a file")
     parser.add_argument('--streamlit', action='store_true', help="Enable Streamlit-specific logging")
     args = parser.parse_args()
-
-    log_enabled = args.log
-    is_streamlit = args.streamlit  # Check if Streamlit-specific logging should be enabled
-    process_video(args.url, log_enabled, is_streamlit=is_streamlit)
-
-
-# If this script is run directly, call the main() function.
-if __name__ == "__main__":
-    main()
