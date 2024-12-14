@@ -52,6 +52,8 @@ def sanitize_filename(filename):
     sanitized = re.sub(r'[^\w\s\.-]', '', normalized)
     # Collapse multiple spaces and strip leading/trailing spaces
     sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+    # Replace remaining problematic characters with underscores
+    sanitized = sanitized.replace('"', '_').replace("'", '_').replace("‘", '_').replace("’", '_')
     return sanitized
 
 
