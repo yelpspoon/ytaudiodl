@@ -1,24 +1,23 @@
 # app.py
 import streamlit as st
-from ytdlp import process_video, StreamlitHandler, extract_video_info
 from pathlib import Path
 import shutil
 import zipfile
+import logging
+import subprocess
+import re
 
-# Function to prepare the downloaded audio for download via Streamlit
+# --- Streamlit-Specific Functions and UI ---
+
 def prepare_download(video_url, log_enabled=False, progress_callback=None):
-    # Extract video title and ID
+    """Prepare audio for download via Streamlit."""
     video_title, video_id = extract_video_info(video_url)
 
-    # Process the video and get the output directory or file
     result = process_video(video_url, video_id, log_enabled, progress_callback, is_streamlit=True)
 
-    # Check the result (file or directory)
     if isinstance(result, Path):
-        # If result is a file, return it directly
         if result.suffix == '.mp3':
             return result
-        # If result is a directory, zip it
         zip_filename = f"{result.name}.zip"
         with zipfile.ZipFile(zip_filename, "w") as zipf:
             for file in result.iterdir():
@@ -90,3 +89,96 @@ if process_button_clicked:
             st.markdown(f'<div style="background-color: #FFCDD2; padding: 10px; border-radius: 5px; color: #D32F2F;">An error occurred: {str(e)}</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div style="background-color: #FFF9C4; padding: 10px; border-radius: 5px; color: #F57F17;">Please enter a valid YouTube video URL to proceed.</div>', unsafe_allow_html=True)
+
+# --- Processing Functions (From ytdlp.py) ---
+
+def setup_logging(video_id, is_streamlit=False):
+    """Set up logging for video processing."""
+    log_filename = f"{video_id}.log"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_filename),
+            logging.StreamHandler() if not is_streamlit else StreamlitHandler(),
+        ],
+    )
+    logging.info(f"Logging started for video ID: {video_id}")
+
+def extract_video_info(video_url):
+    """Extract video title and ID using yt-dlp CLI."""
+    result = subprocess.run(
+        ["yt-dlp", "--get-title", "--get-id", "--restrict-filenames", video_url],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    output = result.stdout.strip().split("\n")
+    video_title = output[0] if output else "Unknown Title"
+    video_id = output[1] if len(output) > 1 else "UnknownID"
+    return video_title.strip(), video_id
+
+def process_video(video_url, video_id, log_enabled=False, progress_callback=None, is_streamlit=False):
+    """Download and process video audio."""
+    video_title, _ = extract_video_info(video_url)
+
+    if log_enabled:
+        setup_logging(video_id, is_streamlit)
+
+    # Create a directory for storing audio files
+    video_title_path = Path(video_title)
+    video_title_path.mkdir(parents=True, exist_ok=True)
+
+    # Download audio to the subdirectory
+    if progress_callback:
+        progress_callback(f"Downloading audio for {video_title}...")
+
+    process = subprocess.Popen(
+        [
+            "yt-dlp",
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "--audio-quality", "320k",
+            "--split-chapters",
+            "--restrict-filenames",
+            "--output", f"{video_title_path}/%(title)s.%(ext)s",
+            video_url,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    # Log real-time progress
+    for line in process.stdout:
+        if is_streamlit:
+            st.write(line.strip())
+    for line in process.stderr:
+        if is_streamlit:
+            st.write(f"ERROR: {line.strip()}")
+
+    process.wait()
+
+    # Handle chapter-split files
+    chapter_files = list(Path(".").glob(f"{video_title_path.name} - *.mp3"))
+
+    if chapter_files:
+        for chapter_file in chapter_files:
+            dest = video_title_path / chapter_file.name
+            shutil.move(str(chapter_file), str(dest))
+
+    apply_replaygain(video_title_path, progress_callback)
+    return video_title_path if chapter_files else None
+
+def apply_replaygain(video_title_path, progress_callback=None):
+    """Apply ReplayGain to MP3 files."""
+    final_files = list(video_title_path.glob("*.mp3"))
+    for file in final_files:
+        command = ["mp3gain", "-r", "-k", "-o", str(file)]
+        subprocess.run(command)
+
+# Streamlit-specific logging handler
+class StreamlitHandler(logging.Handler):
+    def emit(self, record):
+        log_entry = self.format(record)
+        st.write(log_entry)
