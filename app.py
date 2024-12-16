@@ -1,23 +1,17 @@
 # app.py
 import streamlit as st
-from ytdlp import process_video, StreamlitHandler
+from ytdlp import process_video, StreamlitHandler, extract_video_info
 from pathlib import Path
 import shutil
 import zipfile
-import logging
-
-# Initialize Streamlit logger to capture logs from ytdlp
-logger = logging.getLogger('streamlit')
-logger.setLevel(logging.DEBUG)
-
-# Add StreamlitHandler to logger
-streamlit_handler = StreamlitHandler()
-logger.addHandler(streamlit_handler)
 
 # Function to prepare the downloaded audio for download via Streamlit
 def prepare_download(video_url, log_enabled=False, progress_callback=None):
-    # Get the output directory or file from ytdlp.py
-    result = process_video(video_url, log_enabled, progress_callback, is_streamlit=True)
+    # Extract video title and ID
+    video_title, video_id = extract_video_info(video_url)
+
+    # Process the video and get the output directory or file
+    result = process_video(video_url, video_id, log_enabled, progress_callback, is_streamlit=True)
 
     # Check the result (file or directory)
     if isinstance(result, Path):
@@ -62,7 +56,6 @@ if process_button_clicked:
             # Define the progress callback
             def progress_callback(message):
                 st.markdown(f"<div style='background-color: #BBDEFB; padding: 10px; border-radius: 5px;'>{message}</div>", unsafe_allow_html=True)
-              # progress.markdown(f"<div style='background-color: #BBDEFB; padding: 10px; border-radius: 5px;'>{message}</div>", unsafe_allow_html=True)
 
             # Start processing and show progress
             progress_callback("Processing video, please wait...")
@@ -71,7 +64,6 @@ if process_button_clicked:
             )
 
             # Update progress to indicate completion
-          # st.markdown(
             progress.markdown(
                 '<div style="background-color: #C8E6C9; padding: 10px; border-radius: 5px;">Processing complete! Ready for download.</div>',
                 unsafe_allow_html=True
