@@ -1,23 +1,10 @@
-import re
-import subprocess
-import shutil
-import time
+# ytdlp.py
 import logging
 from pathlib import Path
-import argparse
-import sys
-
-# Timing function decorator
-def timing_function(func):
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
-        duration = end_time - start_time
-        print(f"Function {func.__name__} executed in {duration:.2f} seconds.")  # Log to terminal
-        return result
-    return wrapper
-
+import subprocess
+import shutil
+import re
+import time
 
 # Streamlit-specific logging handler
 class StreamlitHandler(logging.Handler):
@@ -26,24 +13,20 @@ class StreamlitHandler(logging.Handler):
         import streamlit as st
         st.write(log_entry)  # Display log in the Streamlit app
 
-
-# Set up logging configuration (simplified for Streamlit and command-line)
-def setup_logging(video_title, is_streamlit=False):
+# Set up logging configuration
+def setup_logging(video_id, is_streamlit=False):
     """Set up logging for the video processing."""
+    log_filename = f"{video_id}.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_filename),
+            logging.StreamHandler() if not is_streamlit else StreamlitHandler(),
+        ],
     )
+    logging.info(f"Logging started for video ID: {video_id}")
 
-    if is_streamlit:
-        handler = StreamlitHandler()
-        logging.getLogger().addHandler(handler)
-        logging.info("Logging started for Streamlit.")
-    else:
-        logging.info("Logging started for command line.")
-
-
-@timing_function
 def extract_video_info(video_url):
     """Extract video title and ID using yt-dlp CLI."""
     result = subprocess.run(
@@ -55,18 +38,14 @@ def extract_video_info(video_url):
     output = result.stdout.strip().split("\n")
     video_title = output[0] if output else "Unknown Title"
     video_id = output[1] if len(output) > 1 else "UnknownID"
-    print(f"Video ID: {video_id}")  # Log to terminal
-    print(f"Video Title: {video_title}")  # Log to terminal
     return video_title.strip(), video_id
 
-
-@timing_function
-def process_video(video_url, log_enabled=False, progress_callback=None, is_streamlit=False):
+def process_video(video_url, video_id, log_enabled=False, progress_callback=None, is_streamlit=False):
     """Download and process video audio."""
-    video_title, video_id = extract_video_info(video_url)
+    video_title, _ = extract_video_info(video_url)
 
     if log_enabled:
-        setup_logging(video_title, is_streamlit)
+        setup_logging(video_id, is_streamlit)
 
     # Create a directory for storing audio files
     video_title_path = Path(video_title)
@@ -76,6 +55,7 @@ def process_video(video_url, log_enabled=False, progress_callback=None, is_strea
     if progress_callback:
         progress_callback(f"Downloading audio for {video_title}...")
 
+    # Run yt-dlp to process the video
     process = subprocess.Popen(
         [
             "yt-dlp",
