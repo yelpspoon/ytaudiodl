@@ -4,7 +4,6 @@ import shutil
 import time
 import logging
 from pathlib import Path
-import unicodedata
 import argparse
 import sys
 
@@ -44,24 +43,11 @@ def setup_logging(video_title, is_streamlit=False):
         logging.info("Logging started for command line.")
 
 
-def sanitize_filename(filename):
-    """Sanitize a filename by normalizing Unicode and removing invalid characters."""
-    # Normalize Unicode characters to ASCII
-    normalized = unicodedata.normalize('NFKD', filename).encode('ascii', 'ignore').decode('utf-8')
-    # Remove invalid characters (anything not alphanumeric, space, period, dash, or underscore)
-    sanitized = re.sub(r'[^\w\s\.-]', '', normalized)
-    # Collapse multiple spaces and strip leading/trailing spaces
-    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
-    # Replace remaining problematic characters with underscores
-    sanitized = sanitized.replace('"', '_').replace("'", '_').replace("‘", '_').replace("’", '_')
-    return sanitized
-
-
 @timing_function
 def extract_video_info(video_url):
     """Extract video title and ID using yt-dlp CLI."""
     result = subprocess.run(
-        ["yt-dlp", "--get-title", "--get-id", video_url],
+        ["yt-dlp", "--get-title", "--get-id", "--restrict-filenames", video_url],
         capture_output=True,
         text=True,
         check=True,
@@ -82,14 +68,13 @@ def process_video(video_url, log_enabled=False, progress_callback=None, is_strea
     if log_enabled:
         setup_logging(video_title, is_streamlit)
 
-    # Sanitize the video title for creating a valid directory
-    sanitized_title = sanitize_filename(video_title)
-    video_title_path = Path(sanitized_title)
+    # Create a directory for storing audio files
+    video_title_path = Path(video_title)
     video_title_path.mkdir(parents=True, exist_ok=True)
 
     # Download audio to the subdirectory
     if progress_callback:
-        progress_callback(f"Downloading audio for {sanitized_title}...")
+        progress_callback(f"Downloading audio for {video_title}...")
 
     process = subprocess.Popen(
         [
@@ -98,6 +83,9 @@ def process_video(video_url, log_enabled=False, progress_callback=None, is_strea
             "--audio-format", "mp3",
             "--audio-quality", "320k",
             "--split-chapters",
+            "--restrict-filenames",
+            "--print", f"after_move:FILENAME:%(filepath)s",
+            "--print-to-file", f"after_move:%(filepath)s", "fname.txt",
             "--output", f"{video_title_path}/%(title)s.%(ext)s",
             video_url,
         ],
@@ -122,8 +110,17 @@ def process_video(video_url, log_enabled=False, progress_callback=None, is_strea
     # Wait for the process to finish
     process.wait()
 
+    # Read the downloaded filename from fname.txt
+    try:
+        with open("fname.txt", "r") as file:
+            downloaded_file = Path(file.read().strip())
+            logging.info(f"Downloaded file: {downloaded_file}")
+    except FileNotFoundError:
+        logging.error("fname.txt not found. Cannot retrieve the downloaded filename.")
+        return
+
     # Handle chapter-split files
-    chapter_files = list(Path(".").glob(f"{sanitized_title} - *.mp3"))
+    chapter_files = list(Path(".").glob(f"{downloaded_file.stem} - *.mp3"))
 
     if chapter_files:
         if progress_callback:
@@ -135,19 +132,18 @@ def process_video(video_url, log_enabled=False, progress_callback=None, is_strea
                 number = match.group(1)
                 two_digit_number = f"{int(number):02d}"
                 formatted_name = chapter_file.name.strip().replace(f" - {number}", f" - {two_digit_number}")
-                new_name = sanitize_filename(formatted_name.replace(f" [{video_id}]", ""))
+                new_name = formatted_name.replace(f" [{video_id}]", "")
             else:
-                new_name = sanitize_filename(chapter_file.name.replace(f" [{video_id}]", ""))
+                new_name = chapter_file.name.replace(f" [{video_id}]", "")
 
             dest = video_title_path / new_name
             shutil.move(str(chapter_file), str(dest))
             logging.info(f"Renamed and moved: {chapter_file} -> {dest}")
 
         # Remove the main, originally downloaded file
-        main_file = video_title_path / f"{sanitized_title}.mp3"
-        if main_file.exists():
-            main_file.unlink()
-            logging.info(f"Removed original main file: {main_file}")
+        if downloaded_file.exists():
+            downloaded_file.unlink()
+            logging.info(f"Removed original main file: {downloaded_file}")
 
     # Apply ReplayGain (always applied)
     print("About to apply replaygain")
@@ -155,7 +151,7 @@ def process_video(video_url, log_enabled=False, progress_callback=None, is_strea
     logging.info("About to apply replaygain")
     apply_replaygain(video_title_path, progress_callback)
 
-    return video_title_path if chapter_files else video_title_path / f"{sanitized_title}.mp3"
+    return video_title_path if chapter_files else downloaded_file
 
 
 def apply_replaygain(video_title_path, progress_callback=None):
